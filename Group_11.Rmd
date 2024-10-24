@@ -180,7 +180,7 @@ testData  <- balanced_data[-sample, ] #we select the remaining as validation dat
 
 *   Decision Tree
 *   Random Forest
-*   Logistic Regression (not sure about that, at least to chose some variables and not all ones)
+*   Logistic Regression
 
 ```{r}
 set.seed(3)
@@ -416,7 +416,7 @@ cat("The RMSE for the test set is:", rmse, "\n")
 set.seed(123)
 
 # Create a neural network model with two hidden layers with 3 nodes each
-nn_model <- neuralnet(y_train ~ ., data = data.frame(x_train_norm, y_train), hidden = 4, linear.output = TRUE)
+nn_model <- neuralnet(y_train ~ ., data = data.frame(x_train_norm, y_train), hidden = 3, linear.output = TRUE)
 
 # Ensure that column names of validation and test data are consistent with training data
 colnames(x_val_norm) <- colnames(x_train_norm)
@@ -447,7 +447,7 @@ plot(nn_model, rep = "best")
 set.seed(123)
 
 # Create a neural network model with two hidden layers with 4 nodes each
-nn_model <- neuralnet(y_train ~ ., data = data.frame(x_train_norm, y_train), hidden = c(4, 4), stepmax = 1e6, linear.output = TRUE)
+nn_model <- neuralnet(y_train ~ ., data = data.frame(x_train_norm, y_train), hidden = c(3, 3), linear.output = TRUE)
 
 # Predict using validation data
 validation_predictions <- compute(nn_model, x_val_norm)$net.result
