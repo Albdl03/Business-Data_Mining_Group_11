@@ -1,0 +1,518 @@
+---
+title: "BUSINESS DATA MINING GROUP PROJECT"
+author: "Alberto de Leo"
+date: "2024-10-13"
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+editor_options:
+  markdown:
+    wrap: sentence
+always_allow_html: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Importing the necessary libraries
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ROSE) #For unbalanced data
+library(caret)
+library(e1071)
+library(skimr) 
+library(randomForest) 
+library(corrplot)
+library(ggplot2)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(FNN)
+library(class)
+library(neuralnet)
+library(nnet)
+library(dummies)
+library(DT)
+```
+# Data pre processing
+
+
+# Load the data
+
+```{r data load, echo=FALSE}
+employee_df <- read.csv("./IBM-HR-Employee-Attrition.csv", stringsAsFactors = T)
+```
+
+# Data Cleaning and Reduction
+
+Remove columns that are not useful for the analysis
+```{r}
+employee_df <- employee_df %>% select(-c(Over18, EmployeeCount, StandardHours, EmployeeNumber))
+```
+
+```{r}
+head(employee_df, 10)
+```
+
+
+```{r}
+colSums(is.na(employee_df)) #Check for NA values in the dataset
+```
+
+```{r}
+str(employee_df) # display the structure of the dataframe
+```
+
+```{r}
+dim(employee_df) # find the dimension of data frame
+```
+
+```{r}
+anyDuplicated(employee_df) #check duplicate row
+```
+
+```{r}
+skim(employee_df) #watch a complete summary of data
+```
+
+# Outliers Detection
+
+RECOGNIZE ROWS THAT CONTAIN VALUES THAT ARE OUTLIERS FOR MORE THEN ONE COLUMN
+
+```{r}
+par(mfrow = c(3, 7), mar = c(2, 2, 2, 2))
+
+outlier_row = c()
+for(i in 1:ncol(employee_df[,-c(2)])){
+  if (is.factor(employee_df[,i]) == FALSE){
+    
+    boxplot(employee_df[,i], col = rgb(.7,.7,.7), main = names(employee_df)[i], horizontal = FALSE)
+    
+    quartiles = quantile(employee_df[,i], probs=c(.25, .75), na.rm = TRUE)
+    
+    IQR = IQR(employee_df[,i])
+    
+    Lower = quartiles[1] - 2*IQR 
+    Upper = quartiles[2] + 2*IQR 
+    
+    counter = 0
+    for(row in employee_df[,i]){
+      counter = counter + 1
+      if (row < Lower || row > Upper){
+        outlier_row = append(outlier_row, counter)
+      }}}}
+
+outlier_row <- outlier_row[duplicated(outlier_row)]
+employee_out = employee_df[-c(outlier_row),] #dataset without outliers
+
+#number of outlier detected from 
+#length(outlier_row) 
+```
+```{r}
+selected_data <- c("BusinessTravel", "Gender", "MaritalStatus", "OverTime", "YearsSinceLastPromotion", "YearsInCurrentRole", "YearsAtCompany", "RelationshipSatisfaction", "MonthlyIncome", "JobSatisfaction", "JobLevel", "JobInvolvement", "WorkLifeBalance", "EnvironmentSatisfaction", "Education", "DistanceFromHome", "DailyRate", "Attrition")
+
+employee_out <- employee_out[, selected_data]
+
+```
+
+# Correlation Matrix
+```{r}
+# Load necessary libraries
+library(corrplot)
+library(RColorBrewer)
+
+# Select numeric columns only for correlation
+numeric_columns <- sapply(employee_out, is.numeric)
+df_numeric <- employee_out[, numeric_columns]
+
+# Calculate the correlation matrix
+cor_matrix <- cor(df_numeric, use = "complete.obs")
+
+# Plot the correlation matrix using corrplot
+corrplot(cor_matrix, 
+         method = "color", # Use color to represent correlation coefficients
+         tl.col = "black", tl.srt = 45, # Text label color and rotation
+         number.cex = 0.4, # Text size for numbers inside the plot
+         addCoef.col = "black", # Add correlation coefficients in black
+         mar = c(0, 0, 2, 0), # Adjust margins for title
+         title = "Correlation Matrix of Employee Features",
+         cl.pos = "b", # Position color legend at the bottom
+         cl.cex = 0.8, # Color legend size
+         tl.cex = 0.8) # Text label size
+
+```
+
+# Data Exploration
+
+```{r}
+table(employee_out$Attrition)
+```
+From this graph we see that it is unbalanced. We have more employees who did not leave the company than those who did. This is important to keep in mind when building predictive models, as the class imbalance can affect the model's performance.
+
+```{r}
+# Calculate the frequency of Attrition
+attrition_counts <- table(employee_out$Attrition)
+
+# Create a pie chart
+pie(attrition_counts, labels = paste(names(attrition_counts), round(attrition_counts/sum(attrition_counts)*100, 1), "%"),
+    col = c("lightblue", "lightcoral"), main = "Distribution of Attrition")
+```
+```{r}
+ggplot(employee_out, aes(x = BusinessTravel)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Travel Frequency Count", x = "Frequency of Travel", y = "Count")
+```
+
+Bar plot for Attrition distribution by OverTime
+
+```{r}
+ggplot(employee_out, aes(x = factor(Attrition), fill = OverTime)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Attrition Distribution by OverTime", x = "Attrition", y = "Count") +
+  scale_fill_manual(values = c("lightblue", "lightcoral"))
+
+```
+
+# Without resampling technique
+
+
+```{r}
+# Split data into training and test sets
+set.seed(3)
+# Now Selecting 70% of data as sample from total 'n' rows of the data  
+sample <- sample.int(n = nrow(employee_out), size = floor(.7*nrow(employee_out)), replace = F)
+trainData <- employee_out[sample, ] #we select the sample randomly
+testData  <- employee_out[-sample, ]
+```
+
+```{r}
+# Check the balance of the target variable in the training set
+table(trainData$Attrition)
+
+# Check the balance of the target variable in the test set
+table(testData$Attrition)
+```
+# Model Building
+
+
+*   Naive Bayes
+*   Decision Tree
+*   Random Forest
+*   Logistic Regression
+*   K-Nearest Neighbors (KNN)
+*   Neural Network
+
+```{r}
+set.seed(3)
+# Naive Bayes model
+naive_bayes_model <- naiveBayes(Attrition ~ ., data = trainData)
+
+# Predict on the test dataset
+nb_prob <- predict(naive_bayes_model, testData, type = "raw")[, "Yes"]
+predictions <- predict(naive_bayes_model, testData)
+
+# Create a confusion matrix to evaluate the performance of the model
+confusion_matrix <- table(Predicted = predictions, Actual = testData$Attrition)
+nb_metrics <- confusionMatrix(predictions, testData$Attrition)
+nb_metrics
+```
+
+```{r}
+set.seed(3)
+# Decision Tree model
+decision_tree_model <- rpart(Attrition ~ ., data = trainData, method = "class", maxdepth = 8, cp = 0.001, model = TRUE)
+
+#unpruned tree
+prp(decision_tree_model,
+    type = 2,
+    extra = 104,
+    under = TRUE,
+    split.font = 2,
+    varlen = -10,
+    main = "Decision Tree for Employee Attrition")
+
+#pruned tree
+pfit<- prune(decision_tree_model, 
+             cp = decision_tree_model$cptable[which.min(decision_tree_model$cptable[,"xerror"]),"CP"])
+
+prp(pfit, box.palette = c("lightpink", "lightgreen"), type = 1, extra = 1, varlen = -10)
+
+
+decision_tree_model$variable.importance
+decision_tree_model$cptable
+```
+
+```{r}
+# Predict the test data using the decision tree model
+# Get predicted probabilities instead of class labels
+y_pred_decision_tree_prob <- predict(decision_tree_model, testData, type = "prob")[,2]  # Probability of the "Yes" class
+
+# Make predictions based on a threshold (default is 0.5)
+threshold <- 0.5
+y_pred_class <- ifelse(y_pred_decision_tree_prob >= threshold, "Yes", "No")
+
+# Convert the predicted classes into a factor with the same levels as the original Attrition column
+y_pred_class <- factor(y_pred_class, levels = c("No", "Yes"))
+
+# Create a confusion matrix to evaluate the performance of the model
+confusion_matrix <- table(Predicted = y_pred_class, Actual = testData$Attrition)
+dt_metrics <- confusionMatrix(y_pred_class, testData$Attrition)
+dt_metrics
+```
+
+```{r}
+set.seed(3)
+
+random_forest_model <- randomForest(Attrition ~ ., data = trainData, ntree = 100, importance = TRUE)
+
+## variable importance plot
+varImpPlot(random_forest_model, type = 1)
+
+# Predict the probabilities for the test set
+y_pred_rf_prob <- predict(random_forest_model, testData, type = "prob")
+
+# Extract the predicted probabilities for the "Yes" class (positive class)
+y_pred_yes_prob_rf <- y_pred_rf_prob[, 2] # Probability of the "Yes" class
+
+# Make predictions based on a threshold (default is 0.5)
+threshold <- 0.5
+y_pred_class <- ifelse(y_pred_yes_prob_rf >= threshold, "Yes", "No")
+
+# Convert the predicted classes into a factor with the same levels as the original Attrition column
+y_pred_class <- factor(y_pred_class, levels = c("No", "Yes"))
+# Evaluate the model
+rf_metrics <- confusionMatrix(y_pred_class, testData$Attrition)
+rf_metrics
+```
+
+
+#Logistic Regression
+
+```{r}
+mod = glm(Attrition ~ ., 
+          family = binomial(link = "logit"),
+          data = trainData)
+summary(mod)
+```
+
+```{r}
+# Predict probabilities first
+predicted_probabilities <- predict(mod, newdata = testData, type = "response")
+
+# Convert probabilities to class labels (0 or 1)
+predicted_classes <- ifelse(predicted_probabilities > 0.5, "Yes", "No")
+predicted_classes <- factor(predicted_classes, levels = levels(testData$Attrition))
+# Load the caret library
+library(caret)
+
+# Create a confusion matrix
+lr_metrics <- confusionMatrix(predicted_classes, testData$Attrition)
+lr_metrics
+```
+# Divide the data into training, validation and test sets
+
+```{r}
+
+set.seed(3)
+# Split the data into training (70%), validation (15%), and test (15%) sets
+valIndex <- createDataPartition(testData$Attrition, p = .5, list = FALSE)
+validationData <- testData[ valIndex,]
+testData_1 <- testData[-valIndex,]
+
+#divide train and test in x and y
+x_train <- trainData[, -which(names(trainData) == "Attrition")]
+y_train <- trainData$Attrition
+x_val <- validationData[, -which(names(validationData) == "Attrition")]
+y_val <- validationData$Attrition
+x_test <- testData_1[, -which(names(trainData) == "Attrition")]
+y_test <- testData_1$Attrition
+```
+
+
+```{r}
+# Normalize the data
+
+preProcValues <- preProcess(x_train, method = c("center", "scale"))
+x_train_norm <- predict(preProcValues, x_train)
+x_val_norm <- predict(preProcValues, x_val)
+x_test_norm <- predict(preProcValues, x_test)
+
+```
+
+```{r warning=FALSE}
+
+# Identify categorical columns
+categorical_cols <- c("Attrition", "BusinessTravel", "Department", "EducationField", 
+                      "Gender", "JobRole", "MaritalStatus", "OverTime")
+
+# Apply one-hot encoding to categorical variables
+x_train_norm <- dummy.data.frame(x_train_norm, names = categorical_cols)
+x_val_norm <- dummy.data.frame(x_val_norm, names = categorical_cols)
+x_test_norm <- dummy.data.frame(x_test_norm, names = categorical_cols)
+
+```
+
+
+```{r}
+i=1
+k.optm=1
+for (i in 1:20){ 
+  set.seed(3) #to avoid randomicity
+  knn.mod <- knn(train=x_train_norm, test=x_val_norm, cl=y_train, k=i)
+  k.optm[i] <- 100 * sum(y_val == knn.mod)/NROW(x_val_norm) #to find accuracy
+  k=i
+  cat(k,'=',k.optm[i],'')} #print all the k with their accuracy
+
+#Accuracy plot -> in order to choose the optimal k
+plot(k.optm, type="b", xlab="K- Value",ylab="Accuracy level")
+optimal_k <- which(k.optm == max(k.optm))
+optimal_k
+```
+
+# Knn
+
+```{r}
+#Make predictions on the test set
+knn_pred <- knn(train = x_train_norm, test = x_test_norm, cl = y_train, k = optimal_k, prob = TRUE)
+knn_probs <- attr(knn_pred, "prob")
+
+# Create a confusion matrix
+knn_metrics <- confusionMatrix(knn_pred, y_test)
+knn_metrics
+```
+
+
+# Neural Network
+
+```{r}
+# Create a neural network model
+set.seed(3)
+nn_model <- neuralnet(y_train ~ ., data = data.frame(x_train_norm, y_train), hidden = c(3,3), linear.output = FALSE, stepmax = 1e6)
+
+# Make predictions on the test set using compute function
+nn_results <- compute(nn_model, x_test_norm)
+
+# Extract the predictions and convert to binary labels
+nn_prob <- nn_results$net.result
+nn_pred <- ifelse(nn_prob > 0.5, "Yes", "No")
+nn_pred <- factor(nn_pred[,2], levels = c("No", "Yes"))
+
+# Ensure y_test is a factor
+y_test <- factor(y_test, levels = c("No", "Yes"))
+
+# Create confusion matrix
+nn_metrics <- confusionMatrix(nn_pred, y_test)
+nn_metrics
+```
+
+
+#ROC and AUC
+
+```{r ROC and AUC, message=FALSE, warning=FALSE}
+# Load the pROC library
+library(pROC)
+
+# Create ROC curves and save AUC values
+
+# Naive Bayes
+roc_nb <- pROC::roc(testData$Attrition, nb_prob, plot = TRUE, col = "midnightblue", lwd = 3,
+                    print.auc = FALSE, quiet = TRUE, main = "ROC Curves for Different Models")
+auc_nb <- auc(roc_nb)
+
+# Decision Tree
+roc_dt <- pROC::roc(testData$Attrition, y_pred_decision_tree_prob, plot = TRUE, col = "darkred", lwd = 3,
+                    add = TRUE, print.auc = FALSE, quiet = TRUE)
+auc_dt <- auc(roc_dt)
+
+# Random Forest
+roc_rf <- pROC::roc(testData$Attrition, y_pred_yes_prob_rf, plot = TRUE, col = "forestgreen", lwd = 3,
+                    add = TRUE, print.auc = FALSE, quiet = TRUE)
+auc_rf <- auc(roc_rf)
+
+# Logistic Regression
+roc_lr <- pROC::roc(testData$Attrition, predicted_probabilities, plot = TRUE, col = "orange", lwd = 3,
+                    add = TRUE, print.auc = FALSE, quiet = TRUE)
+auc_lr <- auc(roc_lr)
+
+# KNN
+roc_knn <- pROC::roc(testData_1$Attrition, knn_probs, plot = TRUE, col = "purple", lwd = 3,
+                     add = TRUE, print.auc = FALSE, quiet = TRUE)
+auc_knn <- auc(roc_knn)
+
+# Neural Network
+roc_nn <- pROC::roc(testData_1$Attrition, nn_prob[, 2], plot = TRUE, col = "brown", lwd = 3,
+                    add = TRUE, print.auc = FALSE, quiet = TRUE)
+auc_nn <- auc(roc_nn)
+
+# Adding legend for clarity
+legend("bottomright", 
+       legend = c("Naive Bayes", "Decision Tree", "Random Forest", 
+                  "Logistic Regression", "KNN", "Neural Network"),
+       col = c("midnightblue", "darkred", "forestgreen", 
+               "orange", "purple", "brown"),
+       lwd = 3)
+
+# Create a data frame with AUC values
+auc_values <- data.frame(
+  Model = c("Naive Bayes", "Decision Tree", "Random Forest", "Logistic Regression", "KNN", "Neural Network"),
+  AUC = c(auc_nb, auc_dt, auc_rf, auc_lr, auc_knn, auc_nn)
+)
+
+# Display AUC values table
+print(auc_values)
+```
+
+
+
+```{r}
+# Create a table to compare the performance metrics of different models
+model_names <- c("Naive Bayes", "Decision Tree", "Random Forest", "Logistic Regression", "KNN", "Neural Network")
+
+accuracy <- c(nb_metrics$overall["Accuracy"], dt_metrics$overall["Accuracy"], rf_metrics$overall["Accuracy"], lr_metrics$overall["Accuracy"], knn_metrics$overall["Accuracy"], nn_metrics$overall["Accuracy"])
+
+sensitivity <- c(nb_metrics$byClass["Sensitivity"], dt_metrics$byClass["Sensitivity"], rf_metrics$byClass["Sensitivity"], lr_metrics$byClass["Sensitivity"], knn_metrics$byClass["Sensitivity"], nn_metrics$byClass["Sensitivity"])
+
+specificity <- c(nb_metrics$byClass["Specificity"], dt_metrics$byClass["Specificity"], rf_metrics$byClass["Specificity"], lr_metrics$byClass["Specificity"], knn_metrics$byClass["Specificity"], nn_metrics$byClass["Specificity"])
+
+balanced_accuracy <- c(nb_metrics$byClass["Balanced Accuracy"], dt_metrics$byClass["Balanced Accuracy"], rf_metrics$byClass["Balanced Accuracy"], lr_metrics$byClass["Balanced Accuracy"], knn_metrics$byClass["Balanced Accuracy"], nn_metrics$byClass["Balanced Accuracy"])
+
+auc <- c(auc_nb, auc_dt, auc_rf, auc_lr, auc_knn, auc_nn)
+
+# Create a data frame with the performance metrics
+model_comparison <- data.frame(
+  Model = model_names,
+  Accuracy = accuracy,
+  Sensitivity = sensitivity,
+  Specificity = specificity,
+  Balanced_Accuracy = balanced_accuracy,
+  AUC = auc
+)
+
+model_comparison <- model_comparison %>%
+  mutate_if(is.numeric, round, 2)
+
+# Create an interactive table
+datatable(
+  model_comparison,
+  caption = "Model Performance Comparison",
+  options = list(pageLength = 6, autoWidth = TRUE)
+)
+```
+
+
+```{r}
+# Reshape data for easier plotting with ggplot
+data_long <- model_comparison %>%
+  tidyr::pivot_longer(cols = c(Balanced_Accuracy, Accuracy), names_to = "Metric", values_to = "Value")
+
+# Create the plot
+ggplot(data_long, aes(x = Value, y = Model, fill = Metric)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(values = c("Balanced_Accuracy" = "springgreen3", "Accuracy" = "red3")) +
+  labs(title = "Non Over-Sampling", x = "", y = "Methods") +
+  theme_minimal()
+```
